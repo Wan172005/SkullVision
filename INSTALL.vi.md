@@ -1,5 +1,8 @@
 # Cài đặt trên Ubuntu 24.04 / Python 3.12
 
+Để khôi phục toàn bộ phần mềm apt/Snap của VM cũ, xem
+[bộ khôi phục VM](vm-restore/README.vi.md). Bộ này độc lập với `requirements.txt`.
+
 Chạy từ thư mục chứa `skullvision.py`:
 
 ```bash

@@ -1,0 +1,15 @@
+name	channel	confinement	version	revision
+bare	latest/stable	strict	1.0	5
+core20	latest/stable	strict	20261023	3015
+core22	latest/stable	strict	20250110	1748
+core24	latest/stable	strict	20261022	2307
+firefox	latest/stable/ubuntu-24.04	strict	135.0-2	5751
+firmware-updater	1/stable/ubuntu-24.04	strict	0+git.22198be	167
+gnome-42-2204	latest/stable/ubuntu-24.04	strict	202	202
+gtk-common-themes	latest/stable/ubuntu-24.04	strict	0.1-81-g442e511	1535
+kf6-core24	latest/stable	strict	6.11.2-6.31.0-6.7.5-26.08.2	69
+mesa-2404	latest/stable	strict	25.2.8-snap288	1839
+snap-store	2/stable/ubuntu-24.04	strict	0+git.7a3a49a6	1248
+snapd	latest/stable	strict	2.67	23545
+snapd-desktop-integration	latest/stable/ubuntu-24.04	strict	0.9	253
+vlc	latest/stable	strict	3.0.24-rc1	4472
