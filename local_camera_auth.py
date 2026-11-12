@@ -136,7 +136,7 @@ def _rtsp_authorization(challenge, url, username, password):
     return 'Digest ' + ', '.join(parts)
 
 
-def _rtsp_request(url, host, port, username=None, password=None):
+def _rtsp_request(url, host, port, username=None, password=None, return_response=False):
     with socket.create_connection((host, port), timeout=3) as sock:
         with sock.makefile('rb') as stream:
             def describe(cseq, authorization=None):
@@ -149,11 +149,59 @@ def _rtsp_request(url, host, port, username=None, password=None):
             if status == 401 and username is not None:
                 auth = _rtsp_authorization(headers.get('www-authenticate', ''), url, username, password)
                 status, headers, body = describe(2, auth)
+            if return_response:
+                return status, headers, body
             if status in (401, 403):
                 return False
             if status == 200 and headers.get('content-type', '').split(';')[0].strip() == 'application/sdp' and body.startswith(b'v=0'):
                 return True
             raise RuntimeError(f'Unexpected RTSP DESCRIBE response: {status}')
+
+
+def probe_rtsp_url(url, username=None, password=None):
+    """Verify a stream description; optional known credentials are loopback-only."""
+    parsed = urlparse(url)
+    address = ipaddress.ip_address(parsed.hostname)
+    if (parsed.scheme != 'rtsp' or parsed.username is not None or parsed.password is not None
+            or parsed.fragment or any(c in url for c in ('\r', '\n'))):
+        raise ValueError('Use an RTSP URL with a literal IP and no embedded credentials')
+    if (username is None) != (password is None):
+        raise ValueError('Supply both username and password, or neither')
+    if username is not None:
+        if not address.is_loopback:
+            raise ValueError('Authenticated path verification is restricted to the loopback lab')
+        if any(c in username + password for c in ('\r', '\n')):
+            raise ValueError('Credentials must not contain line breaks')
+    port = parsed.port or 554
+    result = {'url': url, 'port': port, 'verified': False, 'status': None,
+              'verification': 'DESCRIBE/SDP'}
+    try:
+        status, headers, body = _rtsp_request(
+            url, parsed.hostname, port, username, password, return_response=True)
+    except (OSError, RuntimeError, ValueError, KeyError) as exc:
+        result['reason'] = f'RTSP check failed: {exc}'
+        return result
+    result['status'] = status
+    if status == 200:
+        content_type = headers.get('content-type', '').split(';')[0].strip().lower()
+        lines = body.decode('utf-8', errors='replace').splitlines()
+        valid_sdp = (content_type == 'application/sdp' and bool(lines) and lines[0] == 'v=0'
+                     and all(any(line.startswith(prefix) for line in lines)
+                             for prefix in ('o=', 's=', 't='))
+                     and any(re.match(r'm=(?:video|audio)\s+\d+(?:/\d+)?\s+\S+\s+\S+', line)
+                             for line in lines))
+        result['verified'] = valid_sdp
+        result['reason'] = ('Valid audio/video SDP received; playback not tested' if valid_sdp
+                            else 'RTSP 200 without a valid audio/video SDP; path not verified')
+    elif status in (401, 403):
+        result['reason'] = f'RTSP {status}: authentication/access denied; path existence not confirmed'
+    elif status == 404:
+        result['reason'] = 'RTSP 404: path not found'
+    elif 300 <= status < 400:
+        result['reason'] = f'RTSP {status}: redirect not followed; path not verified'
+    else:
+        result['reason'] = f'RTSP {status}: path not verified'
+    return result
 
 
 def check_local_camera_auth(protocol, url, usernames, passwords, on_attempt):

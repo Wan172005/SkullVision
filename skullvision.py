@@ -1787,33 +1787,33 @@ class SkullVision:
         
         return True
     
-    def exploit_rtsp_complete(self, ip: str, rtsp_ports: List[int]) -> List[Dict]:
+    def exploit_rtsp_complete(self, ip: str, rtsp_ports: List[int],
+                             username: Optional[str] = None, password: Optional[str] = None,
+                             paths: Optional[List[str]] = None) -> List[Dict]:
+        from local_camera_auth import probe_rtsp_url
+
         results = []
-        for port in rtsp_ports:
-            streams = [
-                f"rtsp://{ip}:{port}/",
-                f"rtsp://{ip}:{port}/live.sdp",
-                f"rtsp://{ip}:{port}/h264.sdp",
-                f"rtsp://{ip}:{port}/stream1",
-                f"rtsp://{ip}:{port}/Streaming/Channels/1",
-                f"rtsp://{ip}:{port}/onvif/streaming/channels/1"
-            ]
-            
-            for stream in streams:
+        stream_paths = paths if paths is not None else [
+            '/', '/live.sdp', '/h264.sdp', '/stream1', '/Streaming/Channels/1',
+            '/onvif/streaming/channels/1', '/profile1', '/profile2', '/profile3'
+        ]
+        host = f'[{ip}]' if ':' in ip else ip
+        for port in dict.fromkeys(rtsp_ports):
+            for path in dict.fromkeys(stream_paths):
+                stream = f'rtsp://{host}:{port}{path}'
                 try:
-                    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    sock.settimeout(2)
-                    sock.connect((ip, port))
-                    sock.send(b"OPTIONS rtsp://localhost RTSP/1.0\r\nCSeq: 1\r\n\r\n")
-                    data = sock.recv(1024)
-                    sock.close()
-                    
-                    if b"200" in data:
-                        results.append({'url': stream, 'port': port})
-                        self.vis.stream_found(stream, "RTSP", f"Port {port}")
-                        self.detected_streams.setdefault('rtsp', []).append(stream)
-                except:
-                    continue
+                    result = probe_rtsp_url(stream, username, password)
+                except (ValueError, TypeError) as e:
+                    self.vis.warning(f"{stream}: {e}")
+                    return results
+                if result['verified']:
+                    results.append(result)
+                    self.vis.stream_found(stream, "RTSP", "Verified DESCRIBE/SDP; playback not tested")
+                    known_streams = self.detected_streams.setdefault('rtsp', [])
+                    if stream not in known_streams:
+                        known_streams.append(stream)
+                else:
+                    self.vis.info(f"{stream}: {result['reason']}")
         
         return results
     
@@ -3872,22 +3872,38 @@ class SkullVision:
     
     def mode_rtsp_finder(self):
         self.vis.header("📡 RTSP STREAM FINDER", "═", 70)
-        target = input(f"{C}Enter target (IP or IP:PORT): {W}").strip()
+        target = input(f"{C}Enter target (IP, IP:PORT, or full RTSP URL): {W}").strip()
         if target:
-            ip, port = self.parse_target(target)
-            if ip:
-                self.vis.info(f"Finding RTSP streams for {target}")
-                if not port:
-                    rtsp_ports = [554, 8554, 5544, 8555, 10554]
+            paths = None
+            try:
+                if target.startswith('rtsp://'):
+                    parsed = urllib.parse.urlparse(target)
+                    if parsed.username is not None or parsed.password is not None or parsed.fragment:
+                        raise ValueError("Enter credentials separately; URL fragments are not supported")
+                    ip, port = parsed.hostname, parsed.port or 554
+                    paths = [(parsed.path or '/') + (f'?{parsed.query}' if parsed.query else '')]
+                elif '://' in target:
+                    raise ValueError("Expected an RTSP URL, IP, or IP:PORT")
                 else:
-                    rtsp_ports = [port]
-                streams = self.exploit_rtsp_complete(ip, rtsp_ports)
-                if streams:
-                    self.vis.success(f"Found {len(streams)} RTSP streams")
-                    for stream in streams:
-                        self.vis.stream_found(stream['url'], "RTSP", f"Port {stream['port']}")
-                else:
-                    self.vis.info("No RTSP streams found")
+                    ip, port = self.parse_target(target)
+                address = ipaddress.ip_address(ip)
+            except (ValueError, TypeError) as e:
+                self.vis.error(f"Invalid RTSP target: {e}")
+                return
+            username = password = None
+            if address.is_loopback:
+                lab_user = input(f"{C}Known lab username (ENTER to check without authentication): {W}").strip()
+                if lab_user:
+                    import getpass
+                    username = lab_user
+                    password = getpass.getpass("Known lab password: ")
+            self.vis.info("Verifying RTSP paths using DESCRIBE and audio/video SDP")
+            rtsp_ports = [port] if port else [554, 8554, 5544, 8555, 10554]
+            streams = self.exploit_rtsp_complete(ip, rtsp_ports, username, password, paths)
+            if streams:
+                self.vis.success(f"Verified {len(streams)} RTSP descriptions; video playback not tested")
+            else:
+                self.vis.info("No RTSP paths verified. Authentication failures do not prove a path is missing.")
     
     def mode_network_recon(self):
         self.vis.header("🔍 NETWORK RECON", "═", 70)

@@ -81,3 +81,32 @@ SSH, FTP, SMB, SNMP và các cơ sở dữ liệu cần lab dịch vụ riêng;
 chúng không được tạo bởi onvifsim. Các nhánh cũ đó chưa được kiểm chứng bởi
 bài kiểm tra camera local này. Không dùng **All Services** để gọi các nhánh
 local mới; chọn riêng HTTP, ONVIF hoặc RTSP với URL đầy đủ.
+
+## Mục 14: xác minh đường dẫn RTSP
+
+1. Chọn **14 — RTSP Stream Finder**.
+2. Nhập `127.0.0.1:8554` để kiểm tra danh sách đường dẫn mẫu, hoặc nhập
+   `rtsp://127.0.0.1:8554/profile1` để kiểm tra đúng một URL.
+3. Với địa chỉ loopback, nhập một tài khoản lab đã biết, ví dụ `admin` và
+   mật khẩu đã cấu hình trên simulator. Nhấn Enter ở username để kiểm tra
+   không đăng nhập. Mật khẩu nhập riêng và không xuất vào URL/kết quả.
+
+Mỗi URL được kiểm tra bằng `DESCRIBE` trên đúng path và query. Chỉ phản hồi
+200 có Content-Type `application/sdp`, phiên bản SDP, các trường phiên và
+mô tả media audio/video mới được ghi vào danh sách đã xác minh.
+Không dùng `OPTIONS` để xác nhận đường dẫn. Cổng và đường dẫn trùng lặp
+không bị kiểm tra lặp trong cùng một lượt.
+
+- 401/403: cần xác thực hoặc bị từ chối truy cập; chưa xác nhận path tồn tại.
+- 404: máy chủ báo không tìm thấy path.
+- 200 nhưng không có SDP audio/video hợp lệ: chưa xác minh được luồng.
+- Lỗi kết nối, dữ liệu sai định dạng hoặc redirect: hiển thị nguyên nhân;
+  không theo redirect hoặc ghi nhận thành công.
+
+Đây là xác minh mô tả luồng, chưa phải kiểm thử SETUP/PLAY hoặc giải mã video.
+Danh sách path chỉ là các mẫu có sẵn, không bao phủ mọi model camera.
+Ngoài loopback, mục 14 chỉ gửi yêu cầu không xác thực; không sử dụng wordlist
+hoặc tự động dùng tài khoản tìm thấy từ chức năng khác.
+
+Đã thử với onvifsim trên cổng tạm: path đúng và tài khoản đúng trả 200/SDP;
+path không tồn tại trả 404; không đăng nhập hoặc sai mật khẩu trả 401.
