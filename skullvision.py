@@ -91,7 +91,7 @@ try:
     from Cryptodome.Cipher import AES, DES, DES3, ARC4, PKCS1_OAEP, PKCS1_v1_5
     from Cryptodome.PublicKey import RSA, DSA, ECC, ElGamal
     from Cryptodome.Hash import SHA256, SHA512, MD5, SHA1, SHA224, SHA384
-    from Cryptodome.Signature import pkcs1_15, pss, dss
+    from Cryptodome.Signature import pkcs1_15, pss, DSS as dss
     from Cryptodome.Util.Padding import pad, unpad
     from Cryptodome.Random import get_random_bytes
     from Cryptodome.Protocol.KDF import PBKDF2, scrypt, bcrypt
@@ -2648,7 +2648,7 @@ class SkullVision:
                     f.write(str(item) + '\n')
             self.vis.success(f"Results saved to: {filename}")
         else:
-            self.vis.warning("No cameras found for this country")
+            self.vis.warning("No camera entries collected. Check the source and parsing warnings above.")
     
     def show_country_menu(self):
         print(f"\n{Y}Available Countries:{W}")
@@ -2681,9 +2681,15 @@ class SkullVision:
             )
             page_req.raise_for_status()
             
-            last_page_matches = re.findall(r'pagenavigator\("\\?page=", (\d+)', page_req.text)
+            last_page_matches = re.findall(
+                r"""pagenavigator\(\s*['"]\??page=['"]\s*,\s*(\d+)""",
+                page_req.text
+            )
             if not last_page_matches:
-                self.vis.warning("Could not determine total pages")
+                self.vis.warning(
+                    "Could not parse pagination in the source response. "
+                    "The HTML may have changed or the response may be an access-block page."
+                )
                 return results
             
             last_page = int(last_page_matches[0])
@@ -2724,6 +2730,7 @@ class SkullVision:
                     self.vis.progress(page + 1, min(last_page, 30), "Scraping pages")
                     
                 except Exception as e:
+                    self.vis.warning(f"Could not process source page {page}: {e}")
                     continue
                     
         except Exception as e:
@@ -2737,9 +2744,17 @@ class SkullVision:
         self.vis.header("🔓 BRUTEFORCE ENGINE - 10000+ CREDENTIALS", "═", 70)
         
         if not target:
-            target = input(f"{C}Enter target (IP or IP:PORT): {W}").strip()
+            target = input(f"{C}Enter target (IP, IP:PORT, or full local lab HTTP/RTSP URL): {W}").strip()
         
-        ip, port = self.parse_target(target)
+        if target.startswith('rtsp://'):
+            try:
+                parsed = urllib.parse.urlparse(target)
+                ip, port = parsed.hostname, parsed.port or 554
+            except ValueError:
+                self.vis.error("Invalid RTSP URL")
+                return
+        else:
+            ip, port = self.parse_target(target)
         if not ip:
             self.vis.error(f"Invalid target: {target}")
             return
@@ -2748,9 +2763,9 @@ class SkullVision:
         
         print(f"""
 {Y}Select bruteforce type:{W}
-{G}1.{W} HTTP Basic Auth
-{G}2.{W} ONVIF
-{G}3.{W} RTSP
+{G}1.{W} HTTP Basic Auth (local lab URL: Basic/Digest)
+{G}2.{W} ONVIF (local lab URL: WS-Security)
+{G}3.{W} RTSP (local lab URL: DESCRIBE Basic/Digest)
 {G}4.{W} SSH
 {G}5.{W} FTP
 {G}6.{W} SMB
@@ -2767,9 +2782,9 @@ class SkullVision:
         print(f"""
 {Y}Select credential source:{W}
 {G}1.{W} Use default/common credentials (10000+)
-{G}2.{W} Provide custom username file
-{G}3.{W} Provide custom password file
-{G}4.{W} Provide both custom files
+{G}2.{W} Use lab-usernames.txt (with built-in passwords)
+{G}3.{W} Use lab-passwords.txt (with built-in usernames)
+{G}4.{W} Use both lab-usernames.txt and lab-passwords.txt
 {G}5.{W} Generate random credentials
 """)
         cred_choice = input(f"\n{C}Select source (1-5): {W}").strip()
@@ -2780,7 +2795,136 @@ class SkullVision:
             self.vis.error("No credentials provided")
             return
         
+        if bf_choice == '1' and target.startswith(('http://', 'https://')):
+            self.test_loopback_http_auth(target, usernames, passwords)
+            return
+
+        if bf_choice == '2' and target.startswith(('http://', 'https://')):
+            self.test_loopback_camera_auth('ONVIF', target, usernames, passwords)
+            return
+        if bf_choice == '3' and target.startswith('rtsp://'):
+            self.test_loopback_camera_auth('RTSP', target, usernames, passwords)
+            return
+        if target.startswith('rtsp://'):
+            self.vis.error("Use a full RTSP URL only with the local RTSP check (type 3)")
+            return
+        if bf_choice in ('2', '3'):
+            try:
+                local_target = ipaddress.ip_address(ip).is_loopback
+            except ValueError:
+                local_target = False
+            if local_target:
+                example = ('http://127.0.0.1:8000/onvif/device_service' if bf_choice == '2'
+                           else 'rtsp://127.0.0.1:8554/profile1')
+                self.vis.error(f"For the local authentication check, enter the full URL: {example}")
+                return
+
         self.run_bruteforce_complete(ip, port, usernames, passwords, bf_choice)
+
+    def test_loopback_camera_auth(self, protocol: str, url: str, usernames: List[str], passwords: List[str]):
+        from local_camera_auth import check_local_camera_auth
+
+        self.bruteforce_results = []
+        self.vis.info(f"Local {protocol} authentication check: {url}")
+        def progress(attempted, total, accepted):
+            self.vis.info(f"Lab attempt {attempted}/{total}: {'accepted' if accepted else 'rejected'}")
+        try:
+            self.bruteforce_results = check_local_camera_auth(protocol, url, usernames, passwords, progress)
+        except (OSError, ValueError, TypeError, KeyError, RuntimeError, requests.RequestException) as e:
+            self.vis.error(f"Local {protocol} check stopped: {e}")
+            return
+        for result in self.bruteforce_results:
+            self.vis.credential_found(result['username'], result['password'], url, protocol + ' local lab')
+        self.log_activity(f"Local {protocol} Auth Check", "complete",
+                          f"{len(self.bruteforce_results)} credentials accepted")
+        if self.bruteforce_results:
+            filename = f"bruteforce_local_{protocol.lower()}_{int(time.time())}.json"
+            with open(filename, 'w') as f:
+                json.dump(self.bruteforce_results, f, indent=2)
+            self.vis.success(f"Results saved to: {filename}")
+
+    def test_loopback_http_auth(self, url: str, usernames: List[str], passwords: List[str]):
+        """Check a small credential fixture against a protected loopback lab URL."""
+        try:
+            parsed = urllib.parse.urlparse(url)
+            if (parsed.scheme not in ('http', 'https') or
+                    not ipaddress.ip_address(parsed.hostname).is_loopback or
+                    parsed.username is not None or parsed.password is not None):
+                raise ValueError("Use an HTTP(S) URL with a literal loopback IP and no embedded credentials")
+            port = parsed.port or (443 if parsed.scheme == 'https' else 80)
+        except (ValueError, TypeError) as e:
+            self.vis.error(f"Invalid local lab URL: {e}")
+            return
+
+        usernames = list(dict.fromkeys(usernames))
+        passwords = list(dict.fromkeys(passwords))
+        total = len(usernames) * len(passwords)
+        if total == 0:
+            self.vis.error("Local lab check requires at least one username and password")
+            return
+        if not REQUESTS_AVAILABLE:
+            self.vis.error("Requests is not available")
+            return
+
+        self.bruteforce_results = []
+        self.vis.info(f"Local HTTP authentication check: {url} ({total} combinations)")
+        # A separate session avoids the scanner's retries, proxies and old cookies.
+        with requests.Session() as session:
+            session.trust_env = False
+            try:
+                response = session.get(url, timeout=(2, 3), allow_redirects=False)
+                if response.status_code != 401:
+                    self.vis.warning(
+                        f"Unauthenticated request returned HTTP {response.status_code}; "
+                        "expected 401 from a protected resource. No credentials tested."
+                    )
+                    return
+                challenge = response.headers.get('WWW-Authenticate', '')
+                if re.search(r'(?:^|,\s*)Digest\s', challenge, re.IGNORECASE):
+                    auth_class = HTTPDigestAuth
+                elif re.search(r'(?:^|,\s*)Basic\s', challenge, re.IGNORECASE):
+                    auth_class = HTTPBasicAuth
+                else:
+                    self.vis.warning("The endpoint did not advertise supported HTTP Basic/Digest authentication")
+                    return
+
+                # Reject endpoints that accept arbitrary credentials.
+                session.cookies.clear()
+                invalid = f"skullvision_invalid_{secrets.token_hex(8)}"
+                control = session.get(url, auth=auth_class(invalid, invalid),
+                                      timeout=(2, 3), allow_redirects=False)
+                if control.status_code not in (401, 403):
+                    self.vis.warning("Invalid-credential control was not rejected; no credentials tested")
+                    return
+
+                attempted = 0
+                for username in usernames:
+                    for password in passwords:
+                        session.cookies.clear()
+                        response = session.get(url, auth=auth_class(username, password),
+                                               timeout=(2, 3), allow_redirects=False)
+                        attempted += 1
+                        self.vis.info(f"Lab attempt {attempted}/{total}: HTTP {response.status_code}")
+                        if response.status_code == 200:
+                            self.bruteforce_results.append({
+                                'service': 'HTTP local lab', 'port': port,
+                                'username': username, 'password': password, 'url': url
+                            })
+                            self.vis.credential_found(username, password, url, "HTTP local lab")
+                        elif response.status_code not in (401, 403):
+                            self.vis.warning("Unexpected response; stopping the local lab check")
+                            return
+            except requests.RequestException as e:
+                self.vis.error(f"Local HTTP check failed: {e}")
+                return
+
+        self.log_activity("Local HTTP Auth Check", "complete",
+                          f"{len(self.bruteforce_results)} credentials accepted out of {total} combinations")
+        if self.bruteforce_results:
+            filename = f"bruteforce_local_{int(time.time())}.json"
+            with open(filename, 'w') as f:
+                json.dump(self.bruteforce_results, f, indent=2)
+            self.vis.success(f"Results saved to: {filename}")
     
     def get_credentials_complete(self, cred_choice: str) -> Tuple[List[str], List[str]]:
         usernames = []
@@ -2792,34 +2936,28 @@ class SkullVision:
                 passwords.extend(pass_list)
             usernames = list(set(usernames))
             passwords = list(set(passwords))[:100]
-        elif cred_choice == '2':
-            file_path = input(f"\n{C}Username file path: {W}").strip()
+        elif cred_choice in ('2', '3', '4'):
+            wordlist_dir = Path(__file__).resolve().parent
             try:
-                with open(file_path, 'r') as f:
-                    usernames = [line.strip() for line in f if line.strip()]
-            except:
-                self.vis.error("Failed to read username file")
+                if cred_choice in ('2', '4'):
+                    user_file = wordlist_dir / 'lab-usernames.txt'
+                    self.vis.info(f"Username file: {user_file}")
+                    usernames = user_file.read_text(encoding='utf-8').splitlines()
+                    usernames = [line.strip() for line in usernames if line.strip()]
+                else:
+                    usernames = ['admin', 'root', 'user', 'operator']
+                if cred_choice in ('3', '4'):
+                    pass_file = wordlist_dir / 'lab-passwords.txt'
+                    self.vis.info(f"Password file: {pass_file}")
+                    passwords = pass_file.read_text(encoding='utf-8').splitlines()
+                    passwords = [line.strip() for line in passwords if line.strip()]
+                else:
+                    passwords = ['admin', 'password', '12345', '123456', 'root', 'pass']
+            except (OSError, UnicodeError) as e:
+                self.vis.error(f"Failed to read credential files: {e}")
                 return [], []
-            passwords = ['admin', 'password', '12345', '123456', 'root', 'pass']
-        elif cred_choice == '3':
-            file_path = input(f"\n{C}Password file path: {W}").strip()
-            try:
-                with open(file_path, 'r') as f:
-                    passwords = [line.strip() for line in f if line.strip()]
-            except:
-                self.vis.error("Failed to read password file")
-                return [], []
-            usernames = ['admin', 'root', 'user', 'operator']
-        elif cred_choice == '4':
-            user_file = input(f"\n{C}Username file path: {W}").strip()
-            pass_file = input(f"\n{C}Password file path: {W}").strip()
-            try:
-                with open(user_file, 'r') as f:
-                    usernames = [line.strip() for line in f if line.strip()]
-                with open(pass_file, 'r') as f:
-                    passwords = [line.strip() for line in f if line.strip()]
-            except:
-                self.vis.error("Failed to read credential files")
+            if not usernames or not passwords:
+                self.vis.error("The selected credential files must contain non-empty entries")
                 return [], []
         else:
             usernames = ['admin', 'root', 'user', 'test', 'guest', 'demo']

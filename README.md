@@ -268,6 +268,8 @@ Complete Module List
 </p>
 💻 Installation
 
+Ubuntu 24.04 / Python 3.12: [Hướng dẫn cài đặt và dependency đã hiệu chỉnh](INSTALL.vi.md).
+
 Prerequisites
 
 ```bash

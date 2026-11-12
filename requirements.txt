@@ -1,6 +1,7 @@
 # ============================================
 # SKULLVISION - COMPLETE DEPENDENCIES
 # Full Penetration Testing Framework
+# Runtime target: Linux with Python 3.10-3.12 (telnetlib is removed in 3.13).
 # ============================================
 
 # ============================================
@@ -21,7 +22,7 @@ netifaces>=0.11.0
 psutil>=5.9.0
 dnspython>=2.4.0
 python-whois>=0.8.0
-ipaddress>=1.0.23
+# ipaddress is included in the Python standard library.
 
 # Colorful Terminal Output
 colorama>=0.4.6
@@ -32,11 +33,13 @@ rich>=13.7.0
 # ============================================
 
 # Cryptography (AES, RSA, DES, etc.)
-pycryptodome>=3.19.0
+# The source imports Cryptodome, not Crypto.
+pycryptodomex>=3.19.0,<4
 cryptography>=41.0.0
 
 # SSH & Remote Access
-paramiko>=3.3.0
+# DSSKey is imported by the source and was removed in Paramiko 4.
+paramiko>=3.3.0,<4
 
 # SSL/TLS
 pyOpenSSL>=23.2.0
@@ -64,11 +67,12 @@ redis>=5.0.0
 # ============================================
 
 # SMB/CIFS
+# smbprotocol also provides the smbclient Python module.
 smbprotocol>=1.10.0
-smbclient>=1.0.0
 
 # SNMP
-pysnmp>=4.4.0
+# Preserve the synchronous pysnmp.hlapi.getCmd API used by the source.
+pysnmp>=6.1.4,<6.2
 pysnmp-mibs>=0.1.0
 
 # FTP (Built-in)
@@ -112,7 +116,7 @@ websockets>=12.0
 
 # ONVIF Camera Control
 onvif-zeep>=0.2.0
-python-onvif>=2.0.0
+# onvif-zeep provides the onvif module; python-onvif is not a PyPI package.
 zeep>=4.2.0
 
 # RTSP (Built-in)
@@ -151,7 +155,7 @@ vt-py>=0.12.0
 # ============================================
 
 # Exploit Database
-exploitdb>=0.1.0
+# Exploit-DB is an external tool/database, not a PyPI dependency.
 
 # ============================================
 # REPORTING & VISUALIZATION
@@ -177,7 +181,7 @@ loguru>=0.7.0
 
 # Debugging
 ipdb>=0.13.0
-pprint>=0.1
+# pprint is included in the Python standard library.
 
 # ============================================
 # UTILITY
@@ -190,7 +194,8 @@ tqdm>=4.66.0
 python-magic>=0.4.27
 
 # Compression
-python-lzo>=1.14
+# python-lzo is not used by skullvision.py and needs native LZO headers.
+# Optional: install liblzo2-dev first, then pip install python-lzo>=1.14.
 
 # ============================================
 # OPTIONAL BUT RECOMMENDED
@@ -203,10 +208,11 @@ manuf>=1.0.0
 geoip2>=4.7.0
 
 # DNS Recon
-dnsrecon>=1.0.0
+# DNSRecon is an external tool; PyPI has no dnsrecon>=1.0.0 release.
 
 # Subdomain Enumeration
-subfinder>=1.0.0
+# ProjectDiscovery Subfinder is an external Go tool. The PyPI package with
+# this name finds subtitles and is unrelated to this framework.
 
 # ============================================
 # DEVELOPMENT & TESTING
@@ -227,7 +233,7 @@ mypy>=1.5.0
 # pip install -r requirements.txt
 # 
 # For minimal installation (core only):
-# pip install requests beautifulsoup4 paramiko pycryptodome
+# pip install netifaces psutil requests beautifulsoup4 "paramiko>=3.3,<4" "pycryptodomex>=3.19,<4"
 # 
 # For full installation (all features):
 # pip install -r requirements.txt

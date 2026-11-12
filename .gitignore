@@ -1,0 +1,12 @@
+# Local Python environment and caches
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Generated discoveries and reports (may contain credentials or target details)
+cctv_*.txt
+bruteforce_*.json
+skullvision_report_*.json
+report_*.html
+ghost_credentials_*.json
