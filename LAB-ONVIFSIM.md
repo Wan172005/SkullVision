@@ -1,5 +1,55 @@
 # Kiểm tra HTTP, ONVIF và RTSP với onvifsim local
 
+## Mục 10: đọc hãng qua ONVIF khi trang gốc trả 404
+
+Chạy SkullVision trong WSL rồi chọn `10`, nhập `127.0.0.1:8000`
+(thay bằng cổng ONVIF thực tế, không dùng cổng RTSP).
+Nếu HTTP không nhận diện được hãng, trả lời `y` cho câu hỏi
+`Read ONVIF GetDeviceInformation? [y/N]:`, nhập username và password của camera.
+Password được ẩn khi nhập. Tool gọi `/onvif/device_service` bằng SOAP
+GetDeviceInformation với WS-Security UsernameToken, hỗ trợ HTTP Digest khi có
+challenge. Mỗi request có timeout kết nối 2 giây, chờ đọc 3 giây; không theo
+redirect, không dùng proxy môi trường, không dò danh sách tài khoản.
+
+Tool hiển thị Manufacturer, Model và FirmwareVersion rồi đối chiếu Manufacturer
+với danh sách CVE có sẵn. Kết quả chỉ là tham khảo theo hãng, chưa kiểm tra model,
+dải firmware hoặc điều kiện bị ảnh hưởng. Nếu không chỉ định port, mục 10 thử
+HTTP trên 80/443/8080/8443 và dùng port 80 cho bước ONVIF; không tự tìm port ONVIF.
+Endpoint tùy biến và SOAP 1.1 chưa được hỗ trợ ở bước này.
+
+## Mục 17: kiểm tra HTTP camera local có thời hạn
+
+Mục 17 cũng hỗ trợ `172.27.100.182` nếu địa chỉ đó hiện được gán cho một
+interface của chính máy chạy tool (kiểm tra lại mỗi lượt). Nhập
+`172.27.100.182:8000` để kiểm tra đúng cổng 8000 với giới hạn 3 giây;
+chỉ nhập IP để dùng khám phá cổng có giới hạn tổng 30 giây. Các giới hạn
+loopback của nhánh kiểm tra tài khoản HTTP/ONVIF/RTSP vẫn giữ nguyên.
+
+Chọn **17 — Camera Model Detector**, nhập `127.0.0.1:8001` cho cổng
+camera của bản Snap (hoặc `127.0.0.1:8000` nếu simulator dùng cổng đó).
+Với IP loopback kèm cổng, mục này chỉ kiểm tra đúng một cổng. Nếu chỉ nhập
+`127.0.0.1`, tool kiểm tra toàn bộ cổng TCP 1–65535 (không phải UDP), rồi kiểm
+tra ONVIF trên các cổng mở. Mỗi kết nối TCP có timeout 0,2 giây; giai đoạn
+kiểm tra cổng tối đa 15 giây, toàn bộ lượt tối đa 30 giây. Tiến độ có mốc
+cuối; cổng bị timeout hoặc chưa hoàn tất được báo là chưa xác định, không
+coi là đóng. Nếu hết thời hạn thì kết quả là chưa đầy đủ, không khẳng định đã
+kiểm tra hết 65535 cổng. Các cổng mở chưa kịp kiểm tra ONVIF cũng được liệt kê.
+Với địa chỉ kèm cổng, toàn bộ yêu cầu HTTP
+có thời hạn 3 giây, không quét danh sách cổng, không thử RTSP, không đăng
+nhập, không theo redirect và không dùng proxy/retry của session chung.
+
+401/403 nghĩa là dịch vụ HTTP có phản hồi nhưng cần xác thực hoặc từ chối
+truy cập. 404 tại `/` không có nghĩa là camera offline. Mã 200 chỉ được dò
+dấu hiệu hãng trong một mẫu nội dung nhỏ; đây không phải xác minh ONVIF.
+Sau GET `/`, nếu không bị 401/403, tool còn gửi SOAP `GetCapabilities`
+không đăng nhập tới `/onvif/device_service` trên cùng cổng. Chỉ SOAP Envelope/Body
+đúng namespace với `GetCapabilitiesResponse/Capabilities` mới xác nhận ONVIF;
+HTTP 200 chứa HTML hoặc SOAP Fault không được coi là thành công. Cả hai yêu cầu
+dùng chung thời hạn tổng 3 giây. Phản hồi SOAP tối đa 64 KiB, không theo redirect.
+Xác nhận ONVIF không xác nhận hãng camera hoặc khả năng phát video.
+Timeout được báo riêng, không kết luận cổng đóng hoặc thiết bị không phải camera.
+Giới hạn này chỉ áp dụng nhánh mục 17 với IP loopback.
+
 Camera lab dùng địa chỉ `127.0.0.1`, HTTP cổng `8000`, tài khoản thử
 `admin` / `admin123`. Giữ simulator đang chạy trong lúc kiểm tra.
 

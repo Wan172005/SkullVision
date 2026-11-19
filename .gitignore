@@ -1,5 +1,6 @@
 # Local Python environment and caches
 .venv/
+.venv-wsl/
 __pycache__/
 *.py[cod]
 .pytest_cache/
@@ -10,3 +11,4 @@ bruteforce_*.json
 skullvision_report_*.json
 report_*.html
 ghost_credentials_*.json
+screenshot_*.jpg

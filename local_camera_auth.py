@@ -26,7 +26,7 @@ SOAP_PROFILE = ('http://docs.oasis-open.org/wss/2004/01/'
                 'oasis-200401-wss-soap-message-security-1.0')
 
 
-def _onvif_request(session, url, username=None, password=None):
+def _onvif_request(session, url, username=None, password=None, *, return_information=False):
     envelope = ET.Element(f'{{{SOAP}}}Envelope')
     if username is not None:
         header = ET.SubElement(envelope, f'{{{SOAP}}}Header')
@@ -63,9 +63,29 @@ def _onvif_request(session, url, username=None, password=None):
         if any(c in ('NotAuthorized', 'FailedAuthentication') for c in codes):
             return False
         raise RuntimeError(f'ONVIF SOAP fault: {", ".join(codes) or "unknown"}')
-    if response.status_code == 200 and body.find(f'{{{DEVICE}}}GetDeviceInformationResponse') is not None:
+    information = body.find(f'{{{DEVICE}}}GetDeviceInformationResponse')
+    if response.status_code == 200 and information is not None:
+        if return_information:
+            return {name: (information.findtext(f'{{{DEVICE}}}{name}') or '').strip()
+                    for name in ('Manufacturer', 'Model', 'FirmwareVersion')}
         return True
     raise RuntimeError(f'Unexpected ONVIF response: HTTP {response.status_code}')
+
+
+def get_onvif_device_information(url, username, password):
+    """Read device metadata using one supplied account, without credential guessing."""
+    parsed = urlparse(url)
+    if (parsed.scheme not in ('http', 'https') or not parsed.hostname
+            or parsed.username is not None or parsed.password is not None
+            or parsed.fragment or any(c in url for c in ('\r', '\n'))):
+        raise ValueError('Use an HTTP(S) ONVIF endpoint without embedded credentials')
+    with requests.Session() as session:
+        session.trust_env = False
+        session.auth = requests.auth.HTTPDigestAuth(username, password)
+        information = _onvif_request(session, url, username, password, return_information=True)
+    if information is False:
+        raise RuntimeError('ONVIF authentication/access denied; check the account and device clock')
+    return information
 
 
 def _read_rtsp(stream):

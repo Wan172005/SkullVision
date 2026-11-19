@@ -1795,6 +1795,7 @@ class SkullVision:
         results = []
         stream_paths = paths if paths is not None else [
             '/', '/live.sdp', '/h264.sdp', '/stream1', '/Streaming/Channels/1',
+            '/Streaming/Channels/101', '/Streaming/Channels/102', '/Streaming/Channels/103',
             '/onvif/streaming/channels/1', '/profile1', '/profile2', '/profile3'
         ]
         host = f'[{ip}]' if ':' in ip else ip
@@ -3818,13 +3819,37 @@ class SkullVision:
             if ip:
                 self.vis.info(f"Scanning CVEs for {target}")
                 is_camera, brand = self.detect_camera_complete(ip, [port] if port else [80, 443, 8080, 8443])
+                if not brand or brand == 'generic':
+                    self.vis.info("HTTP did not identify a manufacturer. ONVIF can read device information using a known account.")
+                    if input("Read ONVIF GetDeviceInformation? [y/N]: ").strip().lower() == 'y':
+                        import getpass
+                        from local_camera_auth import get_onvif_device_information
+                        onvif_port = port or 80
+                        scheme = 'https' if onvif_port in HTTPS_PORTS else 'http'
+                        host = f'[{ip}]' if ':' in ip else ip
+                        endpoint = f"{scheme}://{host}:{onvif_port}/onvif/device_service"
+                        username = input("ONVIF username: ").strip()
+                        password = getpass.getpass("ONVIF password: ")
+                        try:
+                            information = get_onvif_device_information(endpoint, username, password)
+                            for name, value in information.items():
+                                self.vis.info(f"{name}: {value or '(not provided)'}")
+                            manufacturer = information['Manufacturer'].casefold()
+                            # Match manufacturer names, not broad HTTP hints such as dvr/nvr.
+                            brand = next((name for name in CVE_DATABASE
+                                          if name in manufacturer), None)
+                            if not brand:
+                                self.vis.info("Manufacturer has no matching entry in the bundled CVE list.")
+                        except Exception as exc:
+                            self.vis.warning(f"ONVIF device information failed: {exc}")
                 cves = self.check_cve_database_complete(ip, brand)
                 if cves:
-                    self.vis.success(f"Found {len(cves)} CVEs")
+                    self.vis.warning(f"{len(cves)} bundled CVE references for {brand}; applicability NOT verified.")
+                    self.vis.info("Model, firmware ranges and vulnerability conditions have not been checked.")
                     for cve in cves:
                         self.vis.cve_found(cve['cve'], cve['brand'], cve.get('severity', 'medium'))
                 else:
-                    self.vis.info("No CVEs found for this target")
+                    self.vis.info("No matching manufacturer CVE references; this does not establish device security.")
     
     def mode_vulnerability_scanner(self):
         self.vis.header("🔬 VULNERABILITY SCANNER", "═", 70)
@@ -3943,6 +3968,14 @@ class SkullVision:
         if target:
             ip, port = self.parse_target(target)
             if ip:
+                from local_camera_probe import is_local_lab_address
+                local_lab = is_local_lab_address(ip)
+                if local_lab:
+                    if port is None:
+                        self.discover_local_cameras(ip)
+                    else:
+                        self.detect_local_camera(ip, port)
+                    return
                 self.vis.info(f"Detecting camera model for {target}")
                 open_ports, _ = self.scan_ports_complete(ip, port)
                 is_camera, brand = self.detect_camera_complete(ip, open_ports)
@@ -3950,6 +3983,75 @@ class SkullVision:
                     self.vis.success(f"Camera detected: {brand.upper()}")
                 else:
                     self.vis.info("No camera detected")
+
+    def discover_local_cameras(self, ip: str):
+        from local_camera_probe import scan_local_tcp_ports, probe_local_camera
+
+        deadline = time.monotonic() + 30
+        self.vis.info(f"Local lab: checking TCP ports 1-65535 on {ip}; scan limit 15s, total limit 30s")
+        summary = scan_local_tcp_ports(
+            ip, timeout=15,
+            on_progress=lambda checked, total: self.vis.progress(checked, total, 'Local TCP ports checked'))
+        print()
+        self.vis.info(f"Checked {summary['checked']}/{summary['total']} TCP ports; open: {summary['open_ports']}")
+        if summary['unchecked']:
+            self.vis.warning(f"Scan deadline reached: {summary['unchecked']} ports not completed; discovery is incomplete")
+        if summary['timeout_ports']:
+            self.vis.warning(f"Connection timeout (state unknown): {summary['timeout_ports']}")
+        confirmed = []
+        unverified = []
+        for index, port in enumerate(summary['open_ports']):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                unverified.extend(summary['open_ports'][index:])
+                self.vis.warning(f"Total deadline reached; ONVIF not checked on ports: {unverified}")
+                break
+            self.vis.info(f"Checking ONVIF on {ip}:{port} (up to {min(3, remaining):.1f}s)")
+            result = probe_local_camera(ip, port, timeout=min(3, remaining))
+            if result.get('onvif_verified'):
+                confirmed.append(port)
+                self.vis.success(f"ONVIF device confirmed at http://{ip}:{port}/onvif/device_service")
+            else:
+                detail = result['error'] or result.get('onvif_error') or f"HTTP {result['status']}; ONVIF HTTP {result.get('onvif_status')}"
+                self.vis.info(f"Port {port}: ONVIF unconfirmed ({detail})")
+        self.vis.info(f"Confirmed ONVIF camera ports: {confirmed or 'none'}")
+        self.vis.info("Unconfirmed or uncompleted checks do not prove that no camera exists.")
+
+    def detect_local_camera(self, ip: str, port: int):
+        from local_camera_probe import probe_local_camera
+
+        self.vis.info(f"Local lab: checking only {ip}:{port}; total HTTP timeout 3s")
+        try:
+            result = probe_local_camera(ip, port)
+        except ValueError as exc:
+            self.vis.error(str(exc))
+            return
+        if result['error']:
+            self.vis.warning(result['error'])
+            return
+        status = result['status']
+        self.vis.info(f"HTTP {status} from {ip}:{port}")
+        if result.get('onvif_verified'):
+            self.vis.success(f"ONVIF device confirmed at http://{ip}:{port}/onvif/device_service (GetCapabilities)")
+            self.vis.info("This confirms ONVIF support; camera brand and video playback are not verified.")
+            return
+        if result.get('onvif_status') is not None:
+            self.vis.info(f"ONVIF endpoint: HTTP {result['onvif_status']}; ONVIF support not confirmed")
+        if result.get('onvif_error'):
+            self.vis.warning(f"ONVIF check: {result['onvif_error']}")
+        if status in (401, 403):
+            self.vis.info("HTTP service reachable; authentication required or access denied. Camera brand unconfirmed.")
+            return
+        if status != 200:
+            self.vis.info("HTTP service reachable; root path does not confirm a camera. Check the simulator ONVIF endpoint.")
+            return
+        content = result['sample'].lower()
+        server = result['headers'].get('server', '').lower()
+        for brand, keywords in CAMERA_SERVERS.items():
+            if any(keyword in content or keyword in server for keyword in keywords):
+                self.vis.success(f"Camera indicator: {brand.upper()} (HTTP heuristic, not verified identity)")
+                return
+        self.vis.info("HTTP service reachable; no known camera-brand indicator in the response sample.")
     
     def mode_default_credential_tester(self):
         self.vis.header("🔐 DEFAULT CREDENTIAL TESTER", "═", 70)

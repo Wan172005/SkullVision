@@ -1,2 +1,4 @@
 admin
-lab_nonexistent_user
+root
+user
+guest
